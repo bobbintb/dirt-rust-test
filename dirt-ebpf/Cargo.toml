@@ -4,9 +4,10 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
-dirt-common = { path = "../dirt-common" }
+dirt-common = { path = "../dirt-common", features = ["ebpf"] }
 
 aya-ebpf = { workspace = true }
+aya-ebpf-macros = { workspace = true }
 aya-log-ebpf = { workspace = true }
 
 [build-dependencies]

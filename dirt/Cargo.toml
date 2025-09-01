@@ -9,6 +9,7 @@ license.workspace = true
 dirt-common = { path = "../dirt-common", features = ["user"] }
 
 anyhow = { workspace = true, default-features = true }
+bytes = { workspace = true }
 aya = { workspace = true }
 aya-log = { workspace = true }
 env_logger = { workspace = true }

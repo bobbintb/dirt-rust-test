@@ -1,5 +1,12 @@
 use anyhow::Context as _;
-use aya::{Btf, programs::FExit};
+use aya::{
+    maps::perf::AsyncPerfEventArray,
+    programs::FEntry,
+    util::online_cpus,
+    Btf,
+};
+use bytes::Bytes;
+use dirt_common::unlink::UnlinkEvent;
 #[rustfmt::skip]
 use log::{debug, warn};
 use tokio::signal;
@@ -32,9 +39,30 @@ async fn main() -> anyhow::Result<()> {
         warn!("failed to initialize eBPF logger: {e}");
     }
     let btf = Btf::from_sys_fs().context("BTF from sysfs")?;
-    let program: &mut FExit = ebpf.program_mut("dirt").unwrap().try_into()?;
+    let program: &mut FEntry = ebpf.program_mut("dirt").unwrap().try_into()?;
     program.load("vfs_unlink", &btf)?;
     program.attach()?;
+    let mut perf_array = AsyncPerfEventArray::try_from(ebpf.map_mut("EVENTS")?)?;
+    for cpu_id in online_cpus()? {
+        let mut buf = perf_array.open(cpu_id, None)?;
+        tokio::spawn(async move {
+            let mut buffers = (0..10)
+                .map(|_| Bytes::with_capacity(4096))
+                .collect::<Vec<_>>();
+            loop {
+                let events = buf.read_events(&mut buffers).await.unwrap();
+                for i in 0..events.read {
+                    let buf = &mut buffers[i];
+                    let ptr = buf.as_ptr() as *const UnlinkEvent;
+                    let unlink_event = unsafe { ptr.read_unaligned() };
+                    println!(
+                        "{}",
+                        String::from_utf8_lossy(&unlink_event.file_path[..])
+                    );
+                }
+            }
+        });
+    }
 
     let ctrl_c = signal::ctrl_c();
     println!("Waiting for Ctrl-C...");
