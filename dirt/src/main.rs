@@ -1,5 +1,5 @@
+use anyhow::Context as _;
 use aya::{
-    include_bytes_aligned,
     maps::perf::AsyncPerfEventArray,
     programs::FExit,
     util::online_cpus,
@@ -9,8 +9,18 @@ use aya_log::EbpfLogger;
 use bytes::BytesMut;
 use dirt_common::UnlinkEvent;
 use log::{debug, warn};
-use tokio::signal;
-use tokio::task;
+use serde::Serialize;
+use tokio::{signal, task};
+
+#[derive(Serialize)]
+struct UnlinkEventJson {
+    pid: u32,
+    uid: u32,
+    gid: u32,
+    mnt_userns_ptr: u64,
+    dir_inode_ptr: u64,
+    dentry_ptr: u64,
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -25,12 +35,16 @@ async fn main() -> anyhow::Result<()> {
         debug!("remove limit on locked memory failed, ret is: {ret}");
     }
 
-    let mut ebpf = Ebpf::load(include_bytes_aligned!(concat!(env!("OUT_DIR"), "/dirt")))?;
+    let mut ebpf = Ebpf::load(aya::include_bytes_aligned!(concat!(
+        env!("OUT_DIR"),
+        "/dirt"
+    )))?;
+
     if let Err(e) = EbpfLogger::init(&mut ebpf) {
         warn!("failed to initialize eBPF logger: {e}");
     }
 
-    let btf = Btf::from_sys_fs()?;
+    let btf = Btf::from_sys_fs().context("BTF from sysfs")?;
     let program: &mut FExit = ebpf.program_mut("dirt").unwrap().try_into()?;
     program.load("vfs_unlink", &btf)?;
     program.attach()?;
@@ -38,8 +52,7 @@ async fn main() -> anyhow::Result<()> {
     let mut perf_array = AsyncPerfEventArray::try_from(ebpf.take_map("EVENTS").unwrap())?;
     let cpus = online_cpus().map_err(|e| anyhow::anyhow!("Failed to get online CPUs: {:?}", e))?;
 
-    println!("eBPF program loaded and attached. Monitoring vfs_unlink calls...");
-    println!("Press Ctrl+C to exit.\n");
+    println!("eBPF program loaded. Press Ctrl+C to exit.");
 
     for cpu_id in cpus {
         let mut buf = perf_array.open(cpu_id, None)?;
@@ -52,14 +65,15 @@ async fn main() -> anyhow::Result<()> {
                     if let Some(buf) = buffers.get(i) {
                         if buf.len() >= std::mem::size_of::<UnlinkEvent>() {
                             let event = unsafe { std::ptr::read_unaligned(buf.as_ptr() as *const UnlinkEvent) };
-                            println!("=== vfs_unlink arguments ===");
-                            println!("  PID: {}", event.pid);
-                            println!("  UID: {}", event.uid);
-                            println!("  GID: {}", event.gid);
-                            println!("  mnt_userns pointer: 0x{:x}", event.mnt_userns_ptr);
-                            println!("  dir inode pointer: 0x{:x}", event.dir_inode_ptr);
-                            println!("  dentry pointer: 0x{:x}", event.dentry_ptr);
-                            println!();
+                            let json = UnlinkEventJson {
+                                pid: event.pid,
+                                uid: event.uid,
+                                gid: event.gid,
+                                mnt_userns_ptr: event.mnt_userns_ptr,
+                                dir_inode_ptr: event.dir_inode_ptr,
+                                dentry_ptr: event.dentry_ptr,
+                            };
+                            println!("{}", serde_json::to_string(&json).unwrap());
                         }
                     }
                 }
