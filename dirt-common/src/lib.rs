@@ -13,3 +13,12 @@ pub struct UnlinkEvent {
 
 #[cfg(feature = "user")]
 unsafe impl aya::Pod for UnlinkEvent {}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct Settings {
+    pub mnt_dev: u64,
+}
+
+#[cfg(feature = "user")]
+unsafe impl aya::Pod for Settings {}

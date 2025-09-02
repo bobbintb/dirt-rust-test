@@ -1,13 +1,15 @@
+use std::os::unix::fs::MetadataExt;
+
 use anyhow::Context as _;
 use aya::{
-    maps::perf::AsyncPerfEventArray,
+    maps::{perf::AsyncPerfEventArray, Array},
     programs::FExit,
     util::online_cpus,
     Btf, Ebpf,
 };
 use aya_log::EbpfLogger;
 use bytes::BytesMut;
-use dirt_common::UnlinkEvent;
+use dirt_common::{Settings, UnlinkEvent};
 use log::{debug, warn};
 use serde::Serialize;
 use tokio::{signal, task};
@@ -39,6 +41,18 @@ async fn main() -> anyhow::Result<()> {
         env!("OUT_DIR"),
         "/dirt"
     )))?;
+
+    // Get the device ID of /mnt/user
+    let metadata = std::fs::metadata("/mnt/user")?;
+    let dev_id = metadata.dev();
+
+    // Get the SETTINGS map
+    let mut settings: Array<_, Settings> =
+        Array::try_from(ebpf.take_map("SETTINGS").unwrap())?;
+
+    // Write the device ID to the map
+    let settings_data = Settings { mnt_dev: dev_id };
+    settings.set(0, settings_data, 0)?;
 
     if let Err(e) = EbpfLogger::init(&mut ebpf) {
         warn!("failed to initialize eBPF logger: {e}");
